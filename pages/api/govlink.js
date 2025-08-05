@@ -87,64 +87,62 @@ export default async function handler(req, res) {
   }
 
   const { query } = req.body;
+  const normalizedQuery = query.toLowerCase();
 
   console.log("📝 Incoming query:", query);
 
-  // Improved keyword match: rank by number of keyword matches
-const normalizedQuery = query.toLowerCase();
-let bestMatch = null;
-let highestScore = 0;
+  // Score-based keyword matching
+  let bestMatch = null;
+  let highestScore = 0;
 
-for (const entry of govLinks) {
-  const score = entry.keywords.filter(keyword =>
-    normalizedQuery.includes(keyword)
-  ).length;
+  for (const entry of govLinks) {
+    const score = entry.keywords.filter(keyword =>
+      normalizedQuery.includes(keyword)
+    ).length;
 
-  if (score > highestScore) {
-    highestScore = score;
-    bestMatch = entry;
-  }
-}
-
-if (bestMatch && highestScore > 0) {
-  return res.status(200).json({ summary: bestMatch.summary, link: bestMatch.link });
-}
-
-  console.log("✅ Matched entry:", match);
-
-  if (match) {
-    return res.status(200).json({ summary: match.summary, link: match.link });
+    if (score > highestScore) {
+      highestScore = score;
+      bestMatch = entry;
+    }
   }
 
-  // Fallback to OpenAI if no curated match
+  if (bestMatch && highestScore > 0) {
+    console.log(`✅ Matched curated entry:`, bestMatch.link, `| Score:`, highestScore);
+    return res.status(200).json({ summary: bestMatch.summary, link: bestMatch.link });
+  }
+
+  // Fallback to OpenAI
   try {
-    console.log("🤖 Calling OpenAI with query:", query);
+    console.log("🤖 No curated match found. Falling back to OpenAI for query:", query);
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4',
       messages: [
         {
           role: 'system',
-          content: `Always return:
-1. A short summary
-2. Exactly one trusted .gov or official .org link
-3. If no exact link exists, suggest the official state/federal portal.
-Never invent links.`,
+          content: `You are a helpful assistant that returns official government websites for civic tasks. 
+Rules:
+1. Always include one direct trusted link (.gov or official .org).
+2. Provide a short, helpful summary.
+3. If no exact match exists, direct the user to the most relevant federal or state portal.
+Never make up a link.`,
         },
         { role: 'user', content: query },
       ],
     });
 
     const output = completion.choices[0].message.content;
-    console.log("🤖 GPT Output:", output);
+    console.log("🤖 GPT raw output:", output);
 
     const urlRegex = /(https?:\/\/[\w./\-?&=#%]+)/g;
     const extractedLink = output.match(urlRegex)?.[0] || '';
 
+    console.log("🔗 Extracted link:", extractedLink || "⚠️ None found");
+
     return res.status(200).json({
       summary: output.replace(extractedLink, '').trim(),
       link: extractedLink,
-      note: 'This result was generated via OpenAI. Double-check before submitting sensitive info.',
+      note: 'This result was generated via OpenAI. Always double-check links before submitting sensitive information.',
     });
   } catch (error) {
     console.error("❌ Error in OpenAI API:", error);
