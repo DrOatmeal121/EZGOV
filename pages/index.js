@@ -7,9 +7,9 @@ export default function Home() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    if (!query.trim()) return;
 
-    // Add user's message
+    setLoading(true);
     const newMessages = [...messages, { role: 'user', content: query }];
     setMessages(newMessages);
 
@@ -17,15 +17,23 @@ export default function Home() {
       const response = await fetch('/api/govlink', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({ messages: newMessages, query }),
       });
 
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error('Request failed');
+      }
 
-      // Add AI's reply
-      setMessages([...newMessages, { role: 'assistant', content: `${data.summary}\n${data.link}` }]);
+      const data = await response.json();
+      setMessages([
+        ...newMessages,
+        { role: 'assistant', content: `${data.summary}\n${data.link}` },
+      ]);
     } catch (err) {
-      setMessages([...newMessages, { role: 'assistant', content: '❌ Something went wrong.' }]);
+      setMessages([
+        ...newMessages,
+        { role: 'assistant', content: '❌ Something went wrong. Please try again.' },
+      ]);
     }
 
     setQuery('');
@@ -35,11 +43,21 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gray-100 flex flex-col items-center p-6">
       <h1 className="text-3xl font-bold mb-4">GovLink AI</h1>
-      
-      <div className="bg-white p-4 rounded-xl shadow-md w-full max-w-xl mb-6">
+
+      <div className="bg-white p-4 rounded-xl shadow-md w-full max-w-xl mb-6 overflow-y-auto max-h-96">
+        {messages.length === 0 && (
+          <p className="text-gray-500 italic">
+            Ask me anything related to government services — I’ll find you the official link.
+          </p>
+        )}
         {messages.map((msg, idx) => (
-          <p key={idx} className={msg.role === 'user' ? "text-blue-700 font-medium" : "text-gray-800"}>
-            {msg.role === 'user' ? "🧑 You: " : "🤖 GovLink: "}
+          <p
+            key={idx}
+            className={`mb-2 ${
+              msg.role === 'user' ? 'text-blue-700 font-medium' : 'text-gray-800'
+            }`}
+          >
+            {msg.role === 'user' ? '🧑 You: ' : '🤖 GovLink: '}
             {msg.content}
           </p>
         ))}
@@ -50,8 +68,8 @@ export default function Home() {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Ask your next question..."
-          className="flex-1 p-3 rounded-lg border border-gray-300 shadow-sm"
+          placeholder="Type your question..."
+          className="flex-1 p-3 rounded-lg border border-gray-300 shadow-sm focus:ring-2 focus:ring-blue-400 outline-none"
         />
         <button
           type="submit"
@@ -64,28 +82,3 @@ export default function Home() {
     </main>
   );
 }
-🛠 Step 2. Update the Backend (pages/api/govlink.js)
-Instead of just query, accept messages:
-
-js
-Copy
-const { messages } = req.body;
-const latestQuery = messages[messages.length - 1].content.toLowerCase();
-Then use messages when calling OpenAI:
-
-js
-Copy
-const completion = await openai.chat.completions.create({
-  model: 'gpt-3.5-turbo',
-  messages: [
-    {
-      role: 'system',
-      content: `You are a government services assistant. 
-Always give:
-Summary: <short helpful explanation>
-Link: <official .gov or trusted .org link>`,
-    },
-    ...messages, // include full chat history
-  ],
-  max_tokens: 300,
-});
