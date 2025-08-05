@@ -1,6 +1,14 @@
 import { OpenAI } from 'openai';
+import { supabase } from '../../lib/supabaseClient';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Utility: log only in dev mode
+function devLog(...args) {
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(...args);
+  }
+}
 
 // Curated government links (expand as needed)
 const govLinks = [
@@ -86,69 +94,109 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { query } = req.body;
-  const normalizedQuery = query.toLowerCase();
-
-  console.log("📝 Incoming query:", query);
-
-  // Score-based keyword matching
-  let bestMatch = null;
-  let highestScore = 0;
-
-  for (const entry of govLinks) {
-    const score = entry.keywords.filter(keyword =>
-      normalizedQuery.includes(keyword)
-    ).length;
-
-    if (score > highestScore) {
-      highestScore = score;
-      bestMatch = entry;
-    }
-  }
-
-  if (bestMatch && highestScore > 0) {
-    console.log(`✅ Matched curated entry:`, bestMatch.link, `| Score:`, highestScore);
-    return res.status(200).json({ summary: bestMatch.summary, link: bestMatch.link });
-  }
-
-  // Fallback to OpenAI
   try {
-    console.log("🤖 No curated match found. Falling back to OpenAI for query:", query);
+    const { query } = req.body;
+    const normalizedQuery = query.toLowerCase();
+    devLog("📝 Incoming query:", query);
 
-    const completion = await openai.chat.completions.create({
+    // Score-based keyword matching
+    let bestMatch = null;
+    let highestScore = 0;
+    for (const entry of govLinks) {
+      const score = entry.keywords.filter(k => normalizedQuery.includes(k)).length;
+      if (score > highestScore) {
+        highestScore = score;
+        bestMatch = entry;
+      }
+    }
+
+    if (bestMatch && highestScore >= 2) {
+      devLog("✅ Using curated result:", bestMatch.link);
+
+      await supabase.from('queries').insert([
+        { query, matched_link: bestMatch.link, source: 'curated' },
+      ]);
+
+      return res.status(200).json({ summary: bestMatch.summary, link: bestMatch.link });
+    }
+
+    // 🟢 Step 1: Try GPT‑3.5 first
+    devLog("🤖 No curated match. Trying GPT‑3.5...");
+    const gpt35 = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a government services assistant.
+Answer with this format:
+Summary: <short helpful explanation>
+Link: <direct official .gov or trusted .org URL>`,
+        },
+        { role: 'user', content: query },
+      ],
+      max_tokens: 300,
+    });
+
+    const gpt35Output = gpt35.choices[0].message.content;
+    const gpt35Link = gpt35Output.match(/https?:\/\/\S+\.gov\S*/i);
+
+    if (gpt35Link) {
+      devLog("✅ GPT‑3.5 succeeded:", gpt35Link[0]);
+
+      await supabase.from('queries').insert([
+        { query, matched_link: gpt35Link[0], source: 'gpt-3.5' },
+      ]);
+
+      return res.status(200).json({
+        summary: gpt35Output.replace(gpt35Link[0], '').trim(),
+        link: gpt35Link[0],
+        note: 'Answered via GPT‑3.5',
+      });
+    }
+
+    // 🟠 Step 2: Escalate to GPT‑4 if GPT‑3.5 failed
+    devLog("⚠️ GPT‑3.5 returned no .gov link. Escalating to GPT‑4...");
+    const gpt4 = await openai.chat.completions.create({
       model: 'gpt-4',
       messages: [
         {
           role: 'system',
-          content: `You are a helpful assistant that returns official government websites for civic tasks. 
-Rules:
-1. Always include one direct trusted link (.gov or official .org).
-2. Provide a short, helpful summary.
-3. If no exact match exists, direct the user to the most relevant federal or state portal.
-Never make up a link.`,
+          content: `You are a government services assistant.
+Always give:
+Summary: <short helpful explanation>
+Link: <direct official .gov or trusted .org URL>`,
         },
         { role: 'user', content: query },
       ],
+      max_tokens: 400,
     });
 
-    const output = completion.choices[0].message.content;
-    console.log("🤖 GPT raw output:", output);
+    const gpt4Output = gpt4.choices[0].message.content;
+    const gpt4Link = gpt4Output.match(/https?:\/\/\S+\.gov\S*/i);
 
-    const urlRegex = /(https?:\/\/[\w./\-?&=#%]+)/g;
-    const extractedLink = output.match(urlRegex)?.[0] || '';
-
-    console.log("🔗 Extracted link:", extractedLink || "⚠️ None found");
+    await supabase.from('queries').insert([
+      {
+        query,
+        matched_link: gpt4Link ? gpt4Link[0] : 'https://www.usa.gov/',
+        source: gpt4Link ? 'gpt-4' : 'gpt-4-fallback',
+      },
+    ]);
 
     return res.status(200).json({
-      summary: output.replace(extractedLink, '').trim(),
-      link: extractedLink,
-      note: 'This result was generated via OpenAI. Always double-check links before submitting sensitive information.',
+      summary: gpt4Output.replace(gpt4Link?.[0] || '', '').trim(),
+      link: gpt4Link ? gpt4Link[0] : 'https://www.usa.gov/',
+      note: gpt4Link
+        ? 'Answered via GPT‑4'
+        : '⚠️ GPT‑4 could not find a direct link. Defaulting to usa.gov',
     });
+
   } catch (error) {
-    console.error("❌ Error in OpenAI API:", error);
-    return res.status(500).json({
-      summary: '❌ Sorry, something went wrong fetching the government link.',
-      link: '',
+    console.error("❌ Error in API handler:", error);
+
+    return res.status(200).json({
+      summary: '⚠️ The AI service is currently unavailable.',
+      link: 'https://www.usa.gov/',
+      note: 'Fallback provided because of an error.',
     });
   }
 }
