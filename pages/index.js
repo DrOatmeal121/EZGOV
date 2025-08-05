@@ -58,6 +58,7 @@ export default function Home() {
       </form>
 
       {result && (
+{loading && <div className="animate-spin h-6 w-6 border-4 border-blue-600 border-t-transparent rounded-full"></div>}
         <div className="bg-white p-6 rounded-2xl shadow-lg mt-10 max-w-xl w-full border border-gray-200">
           <h2 className="text-2xl font-semibold text-blue-700 mb-3">Your Result</h2>
           <p className="text-gray-800 mb-3">{result.summary}</p>
