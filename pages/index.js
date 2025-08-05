@@ -19,9 +19,13 @@ export default function Home() {
 
       if (!response.ok) throw new Error('Request failed');
       const data = await response.json();
-      console.log("🌐 Frontend received:", data);
+
+      // Debugging: log the data received from backend
+      console.log("🌐 Frontend received response:", data);
+
       setResult(data);
     } catch (err) {
+      console.error("❌ Frontend error:", err);
       setResult({
         summary: '❌ Something went wrong. Please try again.',
         link: '',
