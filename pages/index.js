@@ -19,7 +19,7 @@ export default function Home() {
 
       if (!response.ok) throw new Error('Request failed');
       const data = await response.json();
-      console.log("🌐 Frontend received:", data); // Debugging
+      console.log("🌐 Frontend received:", data);
       setResult(data);
     } catch (err) {
       setResult({
@@ -51,14 +51,16 @@ export default function Home() {
         <button
           type="submit"
           disabled={loading}
-          className="bg-blue-600 text-white font-semibold p-3 rounded-xl shadow hover:bg-blue-700 disabled:opacity-50 transition duration-200"
+          className="flex justify-center items-center gap-2 bg-blue-600 text-white font-semibold p-3 rounded-xl shadow hover:bg-blue-700 disabled:opacity-50 transition duration-200"
         >
-          {loading ? '🔍 Finding Link...' : 'Get Link'}
+          {loading && (
+            <span className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+          )}
+          {loading ? 'Finding Link...' : 'Get Link'}
         </button>
       </form>
 
       {result && (
-{loading && <div className="animate-spin h-6 w-6 border-4 border-blue-600 border-t-transparent rounded-full"></div>}
         <div className="bg-white p-6 rounded-2xl shadow-lg mt-10 max-w-xl w-full border border-gray-200">
           <h2 className="text-2xl font-semibold text-blue-700 mb-3">Your Result</h2>
           <p className="text-gray-800 mb-3">{result.summary}</p>
