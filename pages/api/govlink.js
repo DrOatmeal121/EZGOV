@@ -90,10 +90,25 @@ export default async function handler(req, res) {
 
   console.log("📝 Incoming query:", query);
 
-  // Loose keyword match: at least 1 keyword present
-  const match = govLinks.find(entry =>
-    entry.keywords.some(keyword => query.toLowerCase().includes(keyword))
-  );
+  // Improved keyword match: rank by number of keyword matches
+const normalizedQuery = query.toLowerCase();
+let bestMatch = null;
+let highestScore = 0;
+
+for (const entry of govLinks) {
+  const score = entry.keywords.filter(keyword =>
+    normalizedQuery.includes(keyword)
+  ).length;
+
+  if (score > highestScore) {
+    highestScore = score;
+    bestMatch = entry;
+  }
+}
+
+if (bestMatch && highestScore > 0) {
+  return res.status(200).json({ summary: bestMatch.summary, link: bestMatch.link });
+}
 
   console.log("✅ Matched entry:", match);
 
