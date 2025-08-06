@@ -7,27 +7,24 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-
-// 🧠 Helper for logging (silent in production)
+// 🧠 Logging helper
 const devLog = (...args) => {
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV !== "production") {
     console.log(...args);
   }
 };
 
-
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // 👇 pull query and messages first
   const { query, messages = [] } = req.body;
 
-  // 👇 then fetch curated links
+  // Fetch curated links from Supabase
   const { data: curatedLinks, error } = await supabase
-    .from('curated_links')
-    .select('*');
+    .from("curated_links")
+    .select("*");
 
   if (error) {
     console.error("❌ Error fetching curated links:", error);
@@ -35,20 +32,23 @@ export default async function handler(req, res) {
     console.log("✅ Loaded curated links:", curatedLinks.length);
   }
 
-  // 👇 now you can normalize query
   const normalized = query.toLowerCase();
   let match = null;
 
-  for (const entry of curatedLinks) {
-    const keywords = entry.keywords || [];
-    const score = keywords.filter(k =>
-      normalized.includes(k.toLowerCase())
-    ).length;
+  // Pass 1: strict match (all keywords must match)
+  match = curatedLinks.find(entry =>
+    entry.keywords.every(k => normalized.includes(k.toLowerCase()))
+  );
 
-    if (score >= keywords.length) {
-      match = entry;
-      break;
-    }
+  // Pass 2: partial match (≥50% keywords)
+  if (!match) {
+    match = curatedLinks.find(entry => {
+      const keywords = entry.keywords || [];
+      const score = keywords.filter(k =>
+        normalized.includes(k.toLowerCase())
+      ).length;
+      return keywords.length > 0 && score / keywords.length >= 0.5;
+    });
   }
 
   if (match) {
@@ -62,24 +62,21 @@ export default async function handler(req, res) {
       source: "curated",
     });
   }
-  
 
-// 2. Fallback to OpenAI
+  // 3. GPT fallback
   try {
-    devLog("🤖 No strong curated match. Falling back to OpenAI.");
+    devLog("🤖 No curated match. Falling back to OpenAI.");
 
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
         {
           role: "system",
-          content: `You are a helpful assistant that returns official government websites for users' civic tasks. Your answers MUST:
-- Include a short summary
-- Include a trusted direct link (ending in .gov or trusted .org)
-- Avoid hallucinating URLs
-- If unsure, suggest searching on usa.gov`,
+          content: `You are GovLink AI. Always return official government websites (.gov or trusted .org). 
+If unsure, suggest usa.gov. Provide a short helpful summary and a direct link.`,
         },
         ...messages,
+        { role: "user", content: query },
       ],
       max_tokens: 350,
     });
@@ -106,13 +103,15 @@ export default async function handler(req, res) {
     return res.status(200).json({
       summary: reply.replace(safeLink, "").trim(),
       link: safeLink,
-      note: !safeLink ? "⚠️ No direct link found. Please visit usa.gov for more info." : undefined,
+      note: !safeLink
+        ? "⚠️ No direct link found. Please visit usa.gov for more info."
+        : undefined,
     });
   } catch (error) {
     console.error("❌ Error in OpenAI API:", error);
     return res.status(500).json({
       summary: "❌ Sorry, something went wrong fetching the government link.",
-      link: '',
+      link: "",
     });
   }
 }
